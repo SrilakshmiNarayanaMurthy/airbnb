@@ -12,12 +12,16 @@ import mysql.connector
 # LangChain + OpenAI (or switch to another LC chat model if you prefer)
 from langchain_openai import ChatOpenAI
 from langchain.schema import HumanMessage, SystemMessage
-from tavily import TavilyClient
+from tavily import TavilyClient 
 
+#provides live info like weather
+#LangChain + OpenAI → handles natural language + structured output
+#FastAPI → builds REST endpoints
+#Pydantic → validates JSON input models (Booking, Preferences, etc.)
 load_dotenv()
 
 # ---------- ENV ----------
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")  #Loads .env variables for keys and DB credentials.
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
 MYSQL_URI = os.getenv("MYSQL_URI", "")
 
@@ -27,6 +31,8 @@ MYSQL_USER = os.getenv("MYSQL_USER")
 MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD")
 MYSQL_DB = os.getenv("MYSQL_DB")
 
+#Returns a connection to the airbnb_lab MySQL DB.
+#Supports either direct variables or URI syntax.
 # ---------- DB ----------
 def get_db_conn():
     if MYSQL_URI:
@@ -52,6 +58,7 @@ def get_db_conn():
             autocommit=True,
         )
 
+#Logs every AI request/response to agent_logs for debugging or analytics.
 def log_to_db(nlu_query: Optional[str], booking_json: Dict[str, Any],
               preferences_json: Dict[str, Any], response_json: Dict[str, Any]) -> None:
     conn = get_db_conn()
@@ -67,7 +74,7 @@ def log_to_db(nlu_query: Optional[str], booking_json: Dict[str, Any],
     )
     cur.close()
     conn.close()
-
+#Each request to /ai/concierge must include these fields, ensuring clean API contracts.
 # ---------- MODELS ----------
 class Booking(BaseModel):
     start_date: str  # "2025-10-20"
@@ -121,7 +128,9 @@ def fetch_live_context(location: str, start_date: str, end_date: str) -> Dict[st
         "pois": brief(poi_q),
         "events": brief(events_q),
     }
-
+#Constructs the conversation prompt for OpenAI.
+#System message enforces “JSON only” output.
+#Human message embeds booking data, preferences, and live context.
 # ---------- LLM PLAN ----------
 def build_prompt(req: ConciergeRequest, live: Dict[str, Any]) -> List[Any]:
     """
@@ -183,6 +192,10 @@ def extract_json(text: str) -> Dict[str, Any]:
     blob = m.group(0) if m else text
     return json.loads(blob)
 
+
+#running model 
+#Uses LangChain’s ChatOpenAI wrapper to query the model.
+#Extracts the JSON response even if it’s wrapped in code fences
 def run_agent(req: ConciergeRequest) -> Dict[str, Any]:
     live = fetch_live_context(req.booking.location, req.booking.start_date, req.booking.end_date)
 
@@ -195,7 +208,7 @@ def run_agent(req: ConciergeRequest) -> Dict[str, Any]:
     msgs = build_prompt(req, live)
     resp = llm.invoke(msgs)
     data = extract_json(resp.content)
-
+    #Guarantees all expected fields exist, even if model output is partial.
     # minimal safeguard: ensure required keys exist
     for k in ["plan", "activities", "restaurants", "packing_checklist"]:
         data.setdefault(k, [] if k != "packing_checklist" else ["light jacket"])
@@ -204,12 +217,12 @@ def run_agent(req: ConciergeRequest) -> Dict[str, Any]:
 
 # ---------- API ----------
 app = FastAPI(title="AI Concierge Agent (Lab 1 Minimal)")
-
+#Enables CORS for all origins → allows your React frontend to call this API directly.
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # tighten for prod
-    allow_credentials=True,
-    allow_methods=["*"],
+    CORSMiddleware, #As fro
+    allow_origins=["*"],  #Allows all domains (like localhost:5173, 127.0.0.1, etc.) to make requests.
+    allow_credentials=True,    #Allows cookies or authentication headers to be included.
+    allow_methods=["*"],    #Allows all HTTP request types (GET, POST, PUT, DELETE, etc.).
     allow_headers=["*"],
 )
 
