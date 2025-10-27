@@ -1,41 +1,44 @@
-const express = require("express");
-const bcrypt = require("bcrypt");
-const { body, validationResult } = require("express-validator");
-const { pool } = require("../db");
+// routes/auth.js
+const express = require("express");  //Brings in Express so we can create a router and define endpoints.
+const bcrypt = require("bcrypt");    //Used to hash passwords on signup and verify them on login
+const { body, validationResult } = require("express-validator");  //Gives you request-body validators (e.g., “email must be valid”) and a way to collect errors.
+const { pool } = require("../db");  //Imports a MySQL (or MariaDB) connection pool so you can run pool.query(...)
 
-const router = express.Router();
-const multer = require("multer");
+const router = express.Router(); //Creates a sub-router (mounted later in your app, usually at /api/auth)
+const multer = require("multer"); //const multer = require("multer"); const path = require("path");
 const path = require("path");
 
-
-// Signup route
-router.post("/signup",
+// ---------------- Traveler + Owner Signup ----------------
+router.post(
+  "/signup",
   body("name").notEmpty().withMessage("name is required"),
   body("email").isEmail().withMessage("valid email required"),
   body("password").isLength({ min: 8 }).withMessage("min 8 chars"),
   async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
+      return res.status(400).json({ errors: errors.array() }); //If validation fails, return all errors right away (HTTP 400).
     }
     const { name, email, password } = req.body;
-
-    try {
-      // check if email exists
+    //Checks for an existing account with the same email. If found, returns 400 { error: "email already in use" }
+    try { 
       const [rows] = await pool.query("SELECT id FROM users WHERE email=?", [email]);
-      if (rows.length > 0) {
-        return res.status(400).json({ error: "email already in use" });
-      }
+      if (rows.length > 0) return res.status(400).json({ error: "email already in use" });
 
-      const password_hash = await bcrypt.hash(password, parseInt(process.env.BCRYPT_ROUNDS) || 12);
+      const rounds = parseInt(process.env.BCRYPT_ROUNDS) || 12;
+      const password_hash = await bcrypt.hash(password, rounds);
+
+      // 🟢 honor frontend role if sent
+      const role = req.body.role === "owner" ? "owner" : "user";
 
       const [result] = await pool.query(
-        "INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)",
-        [name, email, password_hash]
+        "INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, ?)",
+        [name, email, password_hash, role]
       );
 
-      req.session.user = { id: result.insertId, name, email };
-      res.status(201).json({ id: result.insertId, name, email });
+      // 🟢 session reflects true role
+      req.session.user = { id: result.insertId, name, email, role };
+      res.status(201).json({ id: result.insertId, name, email, role });
     } catch (err) {
       console.error(err);
       res.status(500).json({ error: "server error" });
@@ -43,8 +46,11 @@ router.post("/signup",
   }
 );
 
-// Login route
-router.post("/login",
+
+// ---------------- Login ----------------
+// Copies role from DB into the session (critical for owner UI).
+router.post(
+  "/login",
   body("email").notEmpty().withMessage("email and password required"),
   body("password").notEmpty().withMessage("email and password required"),
   async (req, res) => {
@@ -66,7 +72,14 @@ router.post("/login",
         return res.status(400).json({ error: "invalid credentials" });
       }
 
-      req.session.user = { id: user.id, name: user.name, email: user.email };
+      // ⬇️ include role so /api/auth/me returns it to the frontend
+      req.session.user = {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role, // "owner" or "user"
+      };
+
       res.json({ message: "logged in", user: req.session.user });
     } catch (err) {
       console.error(err);
@@ -75,7 +88,7 @@ router.post("/login",
   }
 );
 
-// Who am I route
+// ---------------- Who am I ----------------
 router.get("/me", (req, res) => {
   if (req.session.user) {
     res.json({ authenticated: true, user: req.session.user });
@@ -83,22 +96,21 @@ router.get("/me", (req, res) => {
     res.json({ authenticated: false });
   }
 });
-
-// Logout route
+//clears the server session and replies LOGGed out
+// ---------------- Logout ----------------
 router.post("/logout", (req, res) => {
   req.session.destroy(() => {
     res.json({ message: "logged out" });
   });
 });
 
-
-// --------- auth guard ----------
+// ---------------- Auth guard ----------------
 function requireAuth(req, res, next) {
   if (!req.session.user) return res.status(401).json({ error: "login required" });
   next();
 }
-
-// --------- GET my profile (fresh from DB) ----------
+//Reads the latest details from DB (not just the session copy)
+// ---------------- Profile: GET (fresh from DB) ----------------
 router.get("/profile", requireAuth, async (req, res) => {
   const [rows] = await pool.query(
     "SELECT id, name, email, phone, about, city, state, country, languages, gender, avatar_url FROM users WHERE id=?",
@@ -108,7 +120,7 @@ router.get("/profile", requireAuth, async (req, res) => {
   res.json(rows[0]);
 });
 
-// --------- UPDATE my profile ----------
+// ---------------- Profile: UPDATE ----------------
 router.put(
   "/profile",
   requireAuth,
@@ -131,13 +143,13 @@ router.put(
       [name, email, phone || null, about || null, city || null, state || null, country || null, languages || null, gender || null, req.session.user.id]
     );
 
-    // refresh session copy
+    // refresh session copy (keep role untouched)
     req.session.user = { ...req.session.user, name, email };
     res.json({ updated: r.affectedRows === 1 });
   }
 );
 
-// --------- AVATAR upload ----------
+// ---------------- Avatar upload ----------------
 const storage = multer.diskStorage({
   destination: path.join(__dirname, "..", "uploads"),
   filename: (req, file, cb) => {
@@ -161,4 +173,3 @@ router.post("/avatar", requireAuth, upload.single("avatar"), async (req, res) =>
 });
 
 module.exports = router;
-
