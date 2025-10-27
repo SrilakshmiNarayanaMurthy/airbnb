@@ -1,9 +1,11 @@
 // routes/bookings.js
-const express = require("express");
+const express = require("express"); //Brings in Express, your DB connection pool, and creates a sub-router that you’ll mount
 const { pool } = require("../db");
 const router = express.Router();
 
-// convert "DD-MM-YYYY" → "YYYY-MM-DD" (accepts YYYY-MM-DD as-is)
+// --- helpers ------------------------------------------------------
+//accepts date string from client
+// convert "DD-MM-YYYY" -> "YYYY-MM-DD" (keeps YYYY-MM-DD as-is)
 const toYMD = (s) => {
   if (!s) return "";
   const m1 = /^(\d{2})-(\d{2})-(\d{4})$/.exec(s);
@@ -19,19 +21,20 @@ const requireAuth = (req, res, next) => {
   next();
 };
 
-// ---------- CREATE BOOKING (computes total_price in SQL) ----------
+// --- create booking (pending) -------------------------------------
+// body: { listing_id, start, end, guests }
 router.post("/", requireAuth, async (req, res) => {
   try {
     const { listing_id, start, end, guests = 1 } = req.body || {};
     const startY = toYMD(start);
     const endY   = toYMD(end);
     const userId = req.session.user.id;
-
+    //needs listing, dates
     if (!listing_id || !startY || !endY || !(startY < endY)) {
       return res.status(400).json({ error: "invalid input" });
     }
-
-    // 1) check listing + capacity
+    // Ensures listing exists from DB
+    // 1) listing + capacity
     const [[listing]] = await pool.query(
       "SELECT id, max_guests FROM listings WHERE id = ?",
       [listing_id]
@@ -41,52 +44,94 @@ router.post("/", requireAuth, async (req, res) => {
       return res.status(400).json({ error: "too many guests" });
     }
 
-    // 2) date conflict check
-    const [conflict] = await pool.query(
+    // 2) conflict with ACCEPTED bookings only
+    const [confBookings] = await pool.query(
       `SELECT 1 FROM bookings
        WHERE listing_id = ?
+         AND status = 'accepted'
          AND NOT (check_out <= ? OR check_in >= ?)
        LIMIT 1`,
       [listing_id, startY, endY]
     );
-    if (conflict.length) return res.status(409).json({ error: "dates not available" });
+    if (confBookings.length) {
+      return res.status(409).json({ error: "dates not available (booked)" });
+    }
 
-    // 3) insert using SQL-calculated price (DATEDIFF * price_per_night)
-    // DATEDIFF(end, start) returns nights (end is exclusive)
+    // 3) conflict with owner blackouts
+    const [confBlackouts] = await pool.query(
+      `SELECT 1 FROM listing_blackouts
+       WHERE listing_id = ?
+         AND NOT (end_date < ? OR start_date >= ?)
+       LIMIT 1`,
+      [listing_id, startY, endY]
+    );
+    if (confBlackouts.length) {
+      return res.status(409).json({ error: "dates not available (blackout)" });
+    }
+
+    // 4) insert pending; compute price in SQL
     const sql = `
-      INSERT INTO bookings (listing_id, user_id, check_in, check_out, guests, total_price)
+      INSERT INTO bookings (listing_id, user_id, check_in, check_out, guests, total_price, status)
       SELECT
-        ?, ?, ?, ?, ?, DATEDIFF(?, ?) * l.price_per_night
+        ?, ?, ?, ?, ?, DATEDIFF(?, ?) * l.price_per_night, 'pending'
       FROM listings l
       WHERE l.id = ?
     `;
     const params = [listing_id, userId, startY, endY, guests, endY, startY, listing_id];
-    await pool.query(sql, params);
-
-    // return computed numbers to the client for confirmation
+    const [ins] = await pool.query(sql, params);
+    //Computing total
+    // 5) return computed values
     const [[calc]] = await pool.query(
-      "SELECT DATEDIFF(?, ?) AS nights, (DATEDIFF(?, ?) * price_per_night) AS total_price FROM listings WHERE id=?",
+      `SELECT GREATEST(DATEDIFF(?, ?),0) AS nights,
+              (DATEDIFF(?, ?) * price_per_night) AS total_price
+       FROM listings WHERE id=?`,
       [endY, startY, endY, startY, listing_id]
     );
 
-    console.log("BOOKED:", {
-      listing_id, user_id: userId, nights: calc.nights, total_price: calc.total_price
+    res.status(201).json({
+      id: ins.insertId,
+      nights: Number(calc.nights) || 0,
+      total_price: Number(calc.total_price) || 0,
+      status: "pending",
     });
-
-    res.json({ ok: true, nights: calc.nights, total_price: Number(calc.total_price) });
   } catch (e) {
     console.error("POST /api/bookings error:", e);
     res.status(500).json({ error: "server error" });
   }
 });
 
-// --- (optional) debug: see db + columns ---
-// router.get("/debug", async (_req, res) => {
-//   const [[db]] = await pool.query("SELECT DATABASE() AS db");
-//   const [cols] = await pool.query("SHOW COLUMNS FROM bookings");
-//   res.json({ db: db.db, columns: cols.map(c => c.Field) });
-// });
-// GET /api/bookings/history  – past trips for the logged-in user
+// --- my bookings for traveler (all statuses) ----------------------
+router.get("/my", requireAuth, async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT
+         b.id                         AS booking_id,
+         b.status,
+         b.check_in,
+         b.check_out,
+         b.guests,
+         b.total_price,
+         DATEDIFF(b.check_out, b.check_in) AS nights,
+         l.id                         AS listing_id,
+         l.title,
+         l.city,
+         l.country,
+         l.image_url,
+         l.price_per_night
+       FROM bookings b
+       JOIN listings l ON l.id = b.listing_id
+       WHERE b.user_id = ?
+       ORDER BY b.created_at DESC`,
+      [req.session.user.id]
+    );
+    res.json(rows);
+  } catch (e) {
+    console.error("GET /api/bookings/my error:", e);
+    res.status(500).json({ error: "server error" });
+  }
+});
+
+// --- past trips (already used on History earlier) -----------------
 router.get("/history", requireAuth, async (req, res) => {
   try {
     const [rows] = await pool.query(
@@ -119,6 +164,4 @@ router.get("/history", requireAuth, async (req, res) => {
   }
 });
 
-
 module.exports = router;
-
