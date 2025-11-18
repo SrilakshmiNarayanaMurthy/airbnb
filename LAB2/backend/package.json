@@ -1,0 +1,26 @@
+{
+  "name": "lab1",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": {
+    "dev": "nodemon server.js",
+    "validate": "node scripts/validate-migration.js"
+  },
+  "dependencies": {
+    "bcrypt": "^5.1.1",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.2",
+    "express": "^4.21.2",
+    "express-session": "^1.18.2",
+    "connect-mongo": "^4.0.0",
+    "mongoose": "^7.0.0",
+    "express-validator": "^7.2.1",
+    "kafkajs": "^2.2.4",
+    "multer": "^2.0.2",
+    "mysql2": "^3.15.0",
+    "axios": "^1.4.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.10"
+  }
+}
