@@ -1,0 +1,120 @@
+/* ---- Reset-ish ---- */
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+  color: #0f172a; /* slate-900 */
+  background: radial-gradient(1200px 600px at 20% -10%, #e0f2fe 10%, transparent 60%),
+              radial-gradient(1200px 600px at 120% 10%, #fee2e2 10%, transparent 60%),
+              linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+}
+
+/* ---- Layout ---- */
+.container {
+  max-width: 980px;
+  margin: 40px auto;
+  padding: 0 20px;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.badge {
+  font-size: 14px;
+  color: #334155;
+}
+.badge strong { color: #0ea5e9; }
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 20px;
+}
+@media (min-width: 860px) {
+  .grid { grid-template-columns: 1fr 1fr; }
+}
+
+/* ---- Card ---- */
+.card {
+  background: #ffffffcc;
+  border: 1px solid #e5e7eb;
+  border-radius: 18px;
+  padding: 20px;
+  box-shadow:
+    0 4px 14px rgba(15, 23, 42, 0.05),
+    0 1px 2px rgba(15, 23, 42, 0.06);
+  backdrop-filter: blur(2px);
+}
+
+.title {
+  margin: 0 0 14px;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
+/* ---- Forms ---- */
+.field {
+  display: grid;
+  gap: 6px;
+}
+.label { font-size: 13px; color: #475569; }
+
+.input {
+  appearance: none;
+  width: 100%;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: #fff;
+  font-size: 15px;
+  outline: none;
+  transition: border-color .15s, box-shadow .15s;
+}
+.input:focus {
+  border-color: #38bdf8;
+  box-shadow: 0 0 0 4px rgba(56, 189, 248, .15);
+}
+
+.btn {
+  border: none;
+  border-radius: 12px;
+  padding: 11px 14px;
+  font-weight: 600;
+  font-size: 15px;
+  cursor: pointer;
+  background: linear-gradient(90deg, #0ea5e9, #22d3ee);
+  color: white;
+  transition: transform .05s ease, box-shadow .15s ease;
+  box-shadow: 0 8px 18px rgba(2,132,199,.25);
+}
+.btn:active { transform: translateY(1px); }
+
+.btn-outline {
+  background: #ffffff;
+  color: #0ea5e9;
+  border: 1px solid #bae6fd;
+  box-shadow: none;
+}
+
+/* ---- Messages ---- */
+.note { margin-top: 10px; font-size: 14px; color: #334155; }
+.note.ok { color: #16a34a; }
+.note.err { color: #dc2626; }
+.actions { display: flex; gap: 10px; margin-top: 10px; }
+
+/* ---- Page title ---- */
+.h1 {
+  font-size: 32px;
+  font-weight: 800;
+  margin: 6px 0 8px;
+}
+.subtle {
+  color: #64748b;
+  margin: 0 0 26px 0;
+  font-size: 14px;
+}
