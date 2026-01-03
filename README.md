@@ -258,19 +258,75 @@ Immediately after writing, the backend emits a Kafka event so owner-side flows c
 Owner updates can publish a booking-status event so traveler views stay consistent.
 Optionally, the AI agent can read the booking data and provide recommendations or summaries.
 
+# Airbnb Lab Stack
 
-🧯 Troubleshooting
-CORS issues
+Distributed Airbnb-style lab with an Express + MySQL core, Mongo-backed auth/sessions, Kafka for booking events, a Socket.IO channel for real-time owner/traveler updates, a Vite/React UI, and a FastAPI + LangChain concierge agent. Everything is runnable locally via Docker Compose; AWS and Kubernetes manifests are included for cloud runs.
 
-Ensure FRONTEND_ORIGINS=http://localhost:3000
-Restart backend after changing .env
-Reset local databases
+## Services and Responsibilities
+- `backend` (Node/Express): REST API for auth, listings, bookings, favorites, owner actions. Uses MySQL for primary data, MongoDB for users/sessions, Kafka (via `kafkajs`) for booking/status events, and Socket.IO for push updates.
+- `frontend` (Vite/React + Redux Toolkit): Traveler/owner UI that calls the backend API and subscribes to Socket.IO notifications. Built image served via Nginx (`frontend/Dockerfile`).
+- `ai-agent` (FastAPI): `/ai/concierge` endpoint that builds travel plans with OpenAI (LangChain), optional Tavily live lookups, and logs requests/responses into MySQL (`agent_logs`).
+- Data planes: MySQL 8 for transactional data; MongoDB for users/sessions; Kafka + Zookeeper for event streaming; Kafka UI for inspection.
+- Infra: Root `docker-compose.yml` for local/dev, `aws/` for EC2 + ECR deployment, `k8s/` for Kubernetes manifests, `jmeter/` for load scripts.
 
-If you want a clean slate:
-Stop stack
-Remove Docker volumes for MySQL/Mongo
-Restart compose
+## Runtime Architecture (happy path)
+1. **Auth & sessions**: Mongo-backed `express-session` cookies issued by backend; JWTs are minted for Socket.IO auth (`utils/jwt`). Allowed origins are governed by `FRONTEND_ORIGINS` and `COOKIE_*` envs.
+2. **Listings & bookings (SQL)**: Listings, blackout windows, photos, favorites, and bookings live in MySQL (`sql-schema.js` initializes tables; `scripts/seed-db.js` ensures schema on boot).
+3. **Eventing (Kafka)**: Creating a booking publishes to `booking_created`; owner actions publish to `booking_status`. Consumers in `Kafka/bookingConsumer.js` and `Kafka/bookingStatusConsumer.js` push changes to rooms like `user:{id}` and `role:owner` over Socket.IO.
+4. **AI concierge**: `POST /ai/concierge` accepts a booking + preferences JSON body, enriches with Tavily context (if `TAVILY_API_KEY` is set), asks the LLM (model default `gpt-4o-mini`), enforces JSON-only output, and inserts the full request/response into MySQL for audit.
+5. **Frontend data flow**: `src/api.js` hits REST endpoints; `src/socket.js` joins rooms using the JWT from the login response; screens include Listings, MyTrips, Profile, and owner flows.
 
-Secrets safety
-Never commit real keys
-Use .env and rotate secrets for production
+## Local Development
+### With Docker Compose (recommended)
+```bash
+# From repo root
+cp .env.example .env  # create if you need overrides; see env matrix below
+docker compose up -d
+```
+- Containers: MySQL (`3306`), MongoDB (`27017`), Kafka/Zookeeper, backend (`4000`), frontend (`80`), AI agent (`8001`), Kafka UI (`8080`).
+- The `seed-db` job runs once to ensure MySQL schema. Backend and agent mount local source by default for hot reload; comment volumes in `docker-compose.yml` for production-like builds.
+- Health checks gate service startup for MySQL/Mongo where defined.
+
+### Running services manually
+- Backend: `cd backend && npm install && npm run dev` (requires MySQL, MongoDB, Kafka reachable; env vars below).
+- Frontend: `cd frontend && npm install && npm run dev -- --host --port 5173` (set `VITE_API_URL` and `VITE_WS_URL`).
+- AI agent: `cd ai-agent && pip install -r requirements.txt && uvicorn main:app --reload --port 8001`.
+
+## Configuration (key env vars)
+- Backend: `PORT` (default 4000), `DB_HOST/DB_USER/DB_PASS/DB_NAME`, `MONGO_URL`, `KAFKA_BROKERS`, `JWT_SECRET`, `SESSION_SECRET`, `FRONTEND_ORIGINS`, `NODE_ENV`, `COOKIE_SECURE`, `COOKIE_SAMESITE`.
+- Frontend build args: `VITE_API_URL` (REST base), `VITE_WS_URL` (Socket.IO base).
+- AI agent: `OPENAI_API_KEY`, `TAVILY_API_KEY` (optional live context), `MYSQL_URI` or `MYSQL_HOST/USER/PASSWORD/DB`.
+- Compose/AWS overrides: see root `docker-compose.yml` and `aws/.env` template inside `aws/README.md`.
+
+## Data Model Highlights
+- MySQL tables: `listings`, `bookings`, `listing_blackouts`, `listing_photos`, `favorites`, plus `agent_logs` for AI calls. Schema creation is centralized in `backend/sql-schema.js` (also documented in `backend/SCHEMA.md`).
+- Mongo collections: `users`, `sessions` (from `connect-mongo`), plus legacy `listings`/`bookings` for backwards compatibility.
+- Kafka topics: `booking_created` (traveler-side producer) and `booking_status` (owner-side producer). Messages include booking id, listing id, user id, dates, status, and emit Socket.IO broadcasts on consume.
+
+## API Surface (pointers)
+- Auth/profile: `backend/routes/auth.js` -> `/api/auth/*` (register/login/me/profile/avatar/logout).
+- Listings: `backend/routes/listings-sql.js` -> `/api/listings` (search/detail/create).
+- Bookings & favorites: `backend/routes/bookings.js`, `backend/routes/favorites.js`.
+- Owner workflows: `backend/routes/owners.js` (listing CRUD, blackout management, booking approvals).
+- AI concierge: `ai-agent` -> `POST /ai/concierge` (see `ConciergeRequest` models in `ai-agent/main.py`).
+- Full request/response and schema reference lives in `backend/SCHEMA.md`.
+
+## Operations and Deployments
+- **AWS**: `aws/cloudformation-ec2-docker.yaml` provisions an EC2 host with Docker; `aws/build-and-push.sh` builds/pushes images to ECR; `aws/docker-compose.yml` + `.env` boot the stack on the instance. Follow `aws/README.md`.
+- **Kubernetes**: Manifests in `k8s/` for backend/frontend deployments and services plus `kafka.yaml` (Zookeeper + Kafka). Adjust images/env and apply with `kubectl apply -f`.
+- **Load testing**: `jmeter/FinalLabreport.jmx` drives booking/listing flows; `results.jtl` captures sample outputs. Tailor endpoints/threads before running.
+- **Troubleshooting**: Use `docker compose logs -f <service>`, inspect Kafka topics via Kafka UI (`:8080`), and check MySQL/Mongo connectivity before debugging app code.
+
+## Quick Service URLs (default compose)
+- Frontend: `http://localhost`
+- Backend API: `http://localhost:4000`
+- AI agent: `http://localhost:8001`
+- Kafka UI: `http://localhost:8080`
+
+## Helpful Files
+- `docker-compose.yml`: Local orchestrator (all services).
+- `backend/SCHEMA.md`: Detailed DB schema + endpoint table.
+- `backend/scripts/seed-db.js`: One-shot schema/seed initializer.
+- `frontend/src/*`: React screens, API client, Socket.IO wiring.
+- `ai-agent/main.py`: FastAPI entrypoint, LLM prompt builder, MySQL logger.
+
