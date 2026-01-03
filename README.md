@@ -59,16 +59,16 @@ When a booking is created:
 
 ---
 
-## 🧩 System diagram (Mermaid)
+## 🧩 System diagram 
 
-```mermaid
+
 flowchart LR
-  FE[Frontend<br/>React/Vite] <-- REST --> BE[Backend API<br/>Node/Express]
-  BE <-- SQL --> SQL[(MySQL<br/>Listings, Bookings, Blackouts)]
-  BE <-- NoSQL --> MONGO[(MongoDB<br/>Users, Sessions)]
+  FE[Frontend<br/>React/Vite] <-- REST --> BE[Backend API Node/Express]
+  BE <-- SQL --> SQL[(MySQL Listings, Bookings, Blackouts)]
+  BE <-- NoSQL --> MONGO[(MongoDB Users, Sessions)]
   BE <-- Events --> KF[(Kafka)]
   KF --- KZ[ZooKeeper]
-  FE <-- REST --> AI[AI Agent<br/>FastAPI/LangChain]
+  FE <-- REST --> AI[AI Agent FastAPI/LangChain]
   AI <-- SQL --> SQL
   BE --> UP[/backend/uploads/]
   BE -->|serves static| UPR[/ /uploads/* /]
