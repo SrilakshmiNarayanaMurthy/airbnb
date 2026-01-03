@@ -62,16 +62,7 @@ When a booking is created:
 ## 🧩 System diagram 
 
 
-flowchart LR
-  FE[Frontend<br/>React/Vite] <-- REST --> BE[Backend API Node/Express]
-  BE <-- SQL --> SQL[(MySQL Listings, Bookings, Blackouts)]
-  BE <-- NoSQL --> MONGO[(MongoDB Users, Sessions)]
-  BE <-- Events --> KF[(Kafka)]
-  KF --- KZ[ZooKeeper]
-  FE <-- REST --> AI[AI Agent FastAPI/LangChain]
-  AI <-- SQL --> SQL
-  BE --> UP[/backend/uploads/]
-  BE -->|serves static| UPR[/ /uploads/* /]
+
 
 
 Quick Start (Recommended): Docker Compose
